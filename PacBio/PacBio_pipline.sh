@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 [TOC]
 
 # EasyAmplicon 2 PacBio Pipeline分析流程 (Usearch/Vsearch)
@@ -756,4 +757,5 @@
     # Ubuntu上安装fasttree可以使用`sudo apt install fasttree`
     # On Ubuntu, you can use `sudo apt install fasttree` to install fasttree.
     cd result/tree
+
     fasttree -gtr -nt otus_aligned.fas > otus.nwk
