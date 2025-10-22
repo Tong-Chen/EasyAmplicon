@@ -10,18 +10,41 @@
     # Most of the pipeline runs in linux bash
     # **每次打开Rstudio必须运行下面4行 Run it**，可选替换${db}为EasyMicrobiome安装位置
     # **The following 4 lines must be run every time you open RStudio**, you can optionally replace ${db} with your EasyMicrobiome installation location
-    wd=/mnt/d/amplicon2/PacBio
-    db=/mnt/d/EasyMicrobiome
-    PATH=$PATH:${db}/script:${db}/linux
-    mkdir -p $wd && cd ${wd}
-    mkdir -p seq result temp 
+    
+    
+    
 
     # 在git bash下初始化
     wd=/d/amplicon2/PacBio
     db=/d/EasyMicrobiome
     PATH=$PATH:${db}/win
-    cd ${wd}
+    
+    if test "$(uname)" == "Linux"; then
+      wd=/mnt/d/amplicon2/PacBio
+      db=/mnt/d/EasyMicrobiome
+      PATH=$PATH:${db}/script:${db}/linux
+    fi
+    
+    # mac下初始化
+    if test "$(uname)" == "Darwin"; then 
+      echo mac; 
+      wd=~/github/EasyAmplicon2/PacBio
+      db=~/github/EasyMicrobiome
+      PATH=$PATH:${db}/script:${db}/mac
+      chmod 755 ${db}/mac/*
+      sed -i 's/\r//g' ${db}/script/*.sh
+      sed -i 's/\r//g' ${db}/script/*.R
+      sed -i 's/\r//g' ${db}/script/*.py
+      sed -i 's/\r//g' ${db}/mac/*.sh
+      sed -i 's/\r//g' ${db}/mac/*.r
+      chmod 755 ${db}/script/*
+      mkdir -p $wd
+       
+    fi
 
+    cd ${wd}
+    mkdir -p seq result temp
+    
 ## 1. Start files起始文件
 
     # 1. Analysis pipeline 分析流程: pipeline.sh
@@ -103,12 +126,16 @@
 
     # Example of renaming a single sequence file 单个序列改名测试
     i=HY1_1
-    usearch -fastx_relabel seq/${i}.fq -fastqout temp/${i}.rename.fq -prefix ${i}.
+    # usearch -fastx_relabel seq/${i}.fq -fastqout temp/${i}.rename.fq -prefix ${i}.
+    awk -v prefix="${i}." 'BEGIN{count=1}{if(FNR%4==1) {print "@"prefix""count; count=count+1} \
+         else print $0}' seq/${i}.fq >temp/${i}.rename.fq
     head temp/${i}.rename.fq | cut -c1-60
     
     # Batch reads rename 批量序列重命名
     time for i in `tail -n+2 result/metadata.txt|cut -f1`;do
-     usearch -fastx_relabel seq/${i}.fq -fastqout temp/${i}.rename.fq -prefix ${i}.
+     # usearch -fastx_relabel seq/${i}.fq -fastqout temp/${i}.rename.fq -prefix ${i}.
+     awk -v prefix="${i}." 'BEGIN{count=1}{if(FNR%4==1) {print "@"prefix""count; count=count+1} \
+         else print $0}' seq/${i}.fq >temp/${i}.rename.fq
     done &
     # For vsearch method refer to "FAQ 2"
 
@@ -143,12 +170,12 @@
     #去冗余：完全一致的序列合并，统计size信息，输出唯一序列，-minsize表示保留序列的最小条数,-sizeout输出丰度,--fasta_width 0输出FASTA时不换行（单行序列）减少文件体积 --relabel必须加序列前缀更规范, 1s
     # Dereplicate: Merge identical sequences, count size information, output unique sequences. -minsize specifies the minimum number of sequences to keep. -sizeout outputs abundance. --fasta_width 0 outputs FASTA without line breaks (single-line sequence) to reduce file size. --relabel must be added with a sequence prefix for better standardization. Takes 1s.
     time vsearch --derep_fulllength temp/filtered.fa --fasta_width 0 --sizeout --relabel Uni_  \
-      --output temp/uniques.fa --minuniquesize 2 --threads 8
+      --output temp/uniques.fa --minuniquesize 2 
 
     # View查看uniques.fa, 4.1M
     ls -lsh temp/uniques.fa
     head temp/uniques.fa | cut -c 1-60
-    # Uni_1;size=2148  - Unique sequence Uni_1 appears 165 times
+    # Uni_1;size=2148  - Unique sequence Uni_1 appears 2148 times
 
 ### 4.2 Cluster聚类OTU/Denoise去噪ASV
 
@@ -175,6 +202,8 @@
 
     #方法3. 数据过大无法使用usearch时，备选vsearch方法见"常见问题3"
     # Method 3. When the data is too large to use usearch, see "FAQ 3" for the alternative vsearch method.
+    # vsearch --cluster_unoise temp/uniques.fa --centroids temp/otus1.fa --relabel ASV_
+    # vsearch --uchime3_denovo temp/otus1.fa --nonchimeras temp/otus.fa
 
 ### 4.3 Reference-based chimera detection 基于参考去嵌合
 
@@ -264,8 +293,13 @@
     #过滤特征表对应序列
     # Filter the corresponding sequences in the feature table
     cut -f 1 result/otutab.txt | tail -n+2 > result/otutab.id
-    usearch -fastx_getseqs result/raw/otus.fa \
-        -labels result/otutab.id -fastaout result/otus.fa
+    # usearch -fastx_getseqs result/raw/otus.fa \
+    #     -labels result/otutab.id -fastaout result/otus.fa
+    
+    vsearch -fastx_getseqs result/raw/otus.fa \
+        -labels result/otutab.id \
+        -fastaout result/otus.fa
+      
     #过滤特征表对应序列注释
     # Filter the corresponding sequence annotations in the feature table
     awk 'NR==FNR{a[$1]=$0}NR>FNR{print a[$1]}'\
@@ -277,9 +311,15 @@
     # cp result/raw/otu* result/
 
     # Summary OTU table
-    usearch -otutab_stats result/otutab.txt \
-      -output result/otutab.stat
-    cat result/otutab.stat
+    if test "$(uname)" == "Linux"; then 
+      usearch -otutab_stats result/otutab.txt \
+       -output result/otutab.stat
+    fi
+    
+    if test "$(uname)" == "Darwin"; then 
+      summary.sh -f result/otutab.txt -c CTCTCT
+    fi
+    # cat result/otutab.stat
     #注意最小值，如7333、分位数，或查看result/raw/otutab_nonBac.stat中样本详细数据量，用于重采样
     # Pay attention to the minimum value, quantiles, or view the detailed sample data volume in result/raw/otutab_nonBac.stat for resampling.
 
@@ -295,15 +335,15 @@
     done
     # emu quantify (可选,~1h)
     for fastq in temp/*.filtered.fq; do
-    sample=$(basename "$fastq" .filtered.fq)
-    # Create a directory for each sample 为每个样本创建输出目录
-    mkdir -p "result/emu/$sample"
-    # emu abundance丰度估计
-    emu abundance "$fastq" \
-      --type map-pb \
-      --db /mnt/d/EasyMicrobiome/emu_default \
-      --output-dir "result/emu/$sample" \
-      --threads 4
+      sample=$(basename "$fastq" .filtered.fq)
+      # Create a directory for each sample 为每个样本创建输出目录
+      mkdir -p "result/emu/$sample"
+      # emu abundance丰度估计
+      emu abundance "$fastq" \
+        --type map-pb \
+        --db ${db}/emu_default \
+        --output-dir "result/emu/$sample" \
+        --threads 4
     done
 
 
@@ -319,9 +359,17 @@
       --depth 7333 --seed 1 \
       --normalize result/otutab_rare.txt \
       --output result/alpha/vegan.txt
-    usearch -otutab_stats result/otutab_rare.txt \
-      -output result/otutab_rare.stat
-    cat result/otutab_rare.stat
+    
+    # Summary OTU table
+    if test "$(uname)" == "Linux"; then 
+      usearch -otutab_stats result/otutab.txt \
+       -output result/otutab.stat
+    fi
+    
+    if test "$(uname)" == "Darwin"; then 
+      summary.sh -f result/otutab.txt -c CTCTCT
+    fi
+   
 
 ## 6. Alpha diversity α多样性
 
@@ -330,22 +378,33 @@
     # 使用USEARCH计算14种alpha多样性指数(Chao1有错勿用)
     # Use USEARCH to calculate 14 alpha diversity indices (Chao1 has errors, do not use).
     # details in http://www.drive5.com/usearch/manual/alpha_metrics.html
-    usearch -alpha_div result/otutab_rare.txt \
+    if test "$(uname)" == "Linux"; then 
+      usearch -alpha_div result/otutab_rare.txt \
       -output result/alpha/alpha.txt
+    fi
+    
+    if test "$(uname)" == "Darwin"; then 
+      compute_alpha.R --input result/otutab_rare.txt \
+      --depth 0 \
+      --output result/alpha/alpha.txt
+    fi
+    
 
 ### 6.2. Calculate rarefaction richness 计算稀释丰富度
 
     # 稀释曲线：取1%-100%的序列中OTUs数量，每次无放回抽样
     # Rarefaction curve: Take the number of OTUs in 1%-100% of the sequences, sampling without replacement each time.
     # Rarefaction from 1%, 2% .. 100% in richness (observed OTUs)-method without_replacement https://drive5.com/usearch/manual/cmd_otutab_subsample.html
-    usearch -alpha_div_rare result/otutab_rare.txt \
-      -output result/alpha/alpha_rare.txt \
-      -method without_replacement
-    # Preview the results 预览结果
-    head -n2 result/alpha/alpha_rare.txt
-    # 样本测序量低出现非数值"-"的处理，详见常见问题8
-    # For samples with low sequencing depth, non-numeric values "-" may appear. See FAQ 8 for details on how to handle this.
-    sed -i "s/-/\t0.0/g" result/alpha/alpha_rare.txt
+    if test "$(uname)" == "Linux"; then 
+      usearch -alpha_div_rare result/otutab_rare.txt \
+        -output result/alpha/alpha_rare.txt \
+        -method without_replacement
+      # Preview the results 预览结果
+      head -n2 result/alpha/alpha_rare.txt
+      # 样本测序量低出现非数值"-"的处理，详见常见问题8
+      # For samples with low sequencing depth, non-numeric values "-" may appear. See FAQ 8 for details on how to handle this.
+      sed -i "s/-/\t0.0/g" result/alpha/alpha_rare.txt
+    fi
 
 ### 6.3. Filter by abundance 筛选高丰度菌
 
@@ -378,23 +437,27 @@
     cut -f 2 result/alpha/otu_group_exist.txt | sort | uniq -c
     # 试一试：不同丰度下各组有多少OTU/ASV
     # Try it: How many OTUs/ASVs are there in each group at different abundances?
-    # 可在 http://ehbio.com/test/venn/ 中绘图并显示各组共有和特有维恩或网络图
-    # You can draw and display the common and unique Venn or network diagrams of each group at http://ehbio.com/test/venn/.
-    # 也可在 http://www.ehbio.com/ImageGP 绘制Venn、upSetView和Sanky
-    # You can also draw Venn, upSetView, and Sankey diagrams at http://www.ehbio.com/ImageGP.
+    # 可在 http://www.bic.ac.cn/Evenn/ 中绘图并显示各组共有和特有维恩或网络图
+    # You can draw and display the common and unique Venn or network diagrams of each group at http://www.bic.ac.cn/Evenn/.
+    # 也可在 http://www.bic.ac.cn/BIC 绘制Venn、upSetView和Sanky
+    # You can also draw Venn, upSetView, and Sankey diagrams at http://www.bic.ac.cn/BIC.
 
 ## 7. Beta diversity β多样性
 
-    #结果有多个文件，需要目录
-    # The results have multiple files, so a directory is needed.
-    mkdir -p result/beta/
-    #基于OTU构建进化树 Make OTU tree, 6.7s
-    # Build a phylogenetic tree based on OTUs. Takes 6.7s.
-    usearch -cluster_agg result/otus.fa -treeout result/otus.tree
-    #1s生成5种距离矩阵：bray_curtis, euclidean, jaccard, manhatten, unifrac
-    # Generate 5 distance matrices in 1s: bray_curtis, euclidean, jaccard, manhattan, unifrac.
-    usearch -beta_div result/otutab_rare.txt -tree result/otus.tree \
-    -filename_prefix result/beta/
+    # 这一步 mac 用不了，可以用在线网站https://www.bic.ac.cn/BIC/
+    
+    if test "$(uname)" == "Linux"; then 
+      #结果有多个文件，需要目录
+      # The results have multiple files, so a directory is needed.
+      mkdir -p result/beta/
+      #基于OTU构建进化树 Make OTU tree, 6.7s
+      # Build a phylogenetic tree based on OTUs. Takes 6.7s.
+      usearch -cluster_agg result/otus.fa -treeout result/otus.tree
+      #1s生成5种距离矩阵：bray_curtis, euclidean, jaccard, manhatten, unifrac
+      # Generate 5 distance matrices in 1s: bray_curtis, euclidean, jaccard, manhattan, unifrac.
+      usearch -beta_div result/otutab_rare.txt -tree result/otus.tree \
+      -filename_prefix result/beta/
+    fi
 
 ## 8. Taxonomic summary 物种注释分类汇总
 
